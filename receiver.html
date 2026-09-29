@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Mis Canales — Receiver</title>
+<script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+  }
+  #stage { position: fixed; inset: 0; background: #000; }
+  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+
+  /* ---------- Filtro CRT (mismo look que CrtOverlayView del teléfono) ---------- */
+  #crt { position: absolute; inset: 0; pointer-events: none; display: none; }
+
+  /* 1 · Clásico 90s: scanlines + viñeta */
+  #crt.m1 {
+    display: block;
+    background:
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.39) 100%),
+      repeating-linear-gradient(to bottom, rgba(0,0,0,0.20) 0px, rgba(0,0,0,0.20) 2px, transparent 2px, transparent 4px);
+  }
+  /* 2 · Rejilla RGB: franjas verticales RGB + scanlines tenues + viñeta */
+  #crt.m2 {
+    display: block;
+    background:
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.39) 100%),
+      repeating-linear-gradient(to bottom, rgba(0,0,0,0.07) 0px, rgba(0,0,0,0.07) 2px, transparent 2px, transparent 4px),
+      repeating-linear-gradient(to right,
+        rgba(255,40,40,0.13) 0px, rgba(255,40,40,0.13) 2px,
+        rgba(40,255,40,0.13) 2px, rgba(40,255,40,0.13) 4px,
+        rgba(40,40,255,0.13) 4px, rgba(40,40,255,0.13) 6px);
+  }
+  /* 3 · Máscara de puntos: matriz de puntos RGB + viñeta */
+  #crt.m3 {
+    display: block;
+    background:
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.39) 100%),
+      radial-gradient(circle, rgba(255,60,60,0.19) 1.1px, transparent 1.6px),
+      radial-gradient(circle, rgba(60,255,60,0.19) 1.1px, transparent 1.6px),
+      radial-gradient(circle, rgba(60,60,255,0.19) 1.1px, transparent 1.6px);
+    background-size: auto, 9px 9px, 9px 9px, 9px 9px;
+    background-position: 0 0, 0 0, 3px 0, 6px 0;
+  }
+  /* 4 · Intenso: scanlines fuertes + viñeta marcada + parpadeo leve */
+  #crt.m4 {
+    display: block;
+    background:
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.51) 100%),
+      repeating-linear-gradient(to bottom, rgba(0,0,0,0.37) 0px, rgba(0,0,0,0.37) 1.5px, transparent 1.5px, transparent 3px);
+    animation: flicker 0.35s steps(2) infinite;
+  }
+  @keyframes flicker {
+    0% { filter: brightness(1); }
+    50% { filter: brightness(1.045); }
+    100% { filter: brightness(1); }
+  }
+
+  /* ---------- Ráfaga de estática (transiciones / ZAP) ---------- */
+  #static { position: absolute; inset: 0; display: none; background: #000; }
+  #staticCanvas { width: 100%; height: 100%; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <video id="video" playsinline></video>
+    <div id="crt"></div>
+    <div id="static"><canvas id="staticCanvas"></canvas></div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  var NS = 'urn:x-cast:com.cayena.multicanal';
+  var crt = document.getElementById('crt');
+  var staticBox = document.getElementById('static');
+  var canvas = document.getElementById('staticCanvas');
+  var ctx = canvas.getContext('2d');
+  var staticTimer = null;
+  var staticMinUntil = 0;
+
+  /* ----- Filtro CRT: modos 0..4 iguales que el teléfono ----- */
+  function setFilter(mode) {
+    mode = Math.max(0, Math.min(4, mode | 0));
+    crt.className = mode === 0 ? '' : ('m' + mode);
+  }
+
+  /* ----- Estática animada ----- */
+  function drawNoise() {
+    var w = canvas.width, h = canvas.height;
+    var img = ctx.createImageData(w, h);
+    var d = img.data;
+    for (var i = 0; i < d.length; i += 4) {
+      var v = (Math.random() * 255) | 0;
+      d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  function showStatic() {
+    canvas.width = 180; canvas.height = 100;
+    staticBox.style.display = 'block';
+    drawNoise();
+    if (!staticTimer) staticTimer = setInterval(drawNoise, 90);
+  }
+  function hideStatic() {
+    staticBox.style.display = 'none';
+    if (staticTimer) { clearInterval(staticTimer); staticTimer = null; }
+  }
+
+  /* ----- Receptor ----- */
+  var context = cast.framework.CastReceiverContext.getInstance();
+  var playerManager = context.getPlayerManager();
+
+  // Cada LOAD trae customData {filter}: aplicar filtro y mostrar estática.
+  playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.LOAD,
+    function (loadRequest) {
+      var cd = (loadRequest.media && loadRequest.media.customData) || {};
+      setFilter(cd.filter | 0);
+      showStatic();
+      staticMinUntil = Date.now() + 450; // mínimo del efecto clásico
+      return loadRequest;
+    }
+  );
+
+  // Cuando el video arranca, quitar la estática (respetando el mínimo).
+  playerManager.addEventListener(
+    cast.framework.events.EventType.PLAYING,
+    function () {
+      var wait = staticMinUntil - Date.now();
+      setTimeout(hideStatic, Math.max(0, wait));
+    }
+  );
+  playerManager.addEventListener(
+    cast.framework.events.EventType.ERROR,
+    function () { setTimeout(hideStatic, 600); }
+  );
+
+  // Mensajes del teléfono sin interrumpir la reproducción.
+  context.addCustomMessageListener(NS, function (event) {
+    var d = event.data || {};
+    if (d.type === 'filter') setFilter(d.mode | 0);
+    else if (d.type === 'static') { if (d.show) showStatic(); else hideStatic(); }
+  });
+
+  context.start();
+})();
+</script>
+</body>
+</html>
