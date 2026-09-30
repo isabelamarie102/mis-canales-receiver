@@ -102,8 +102,10 @@
     canvas.width = 180; canvas.height = 100;
     staticBox.style.display = 'block';
     drawNoise();
-    if (!staticTimer) staticTimer = setInterval(drawNoise, 90);
-  }
+    if (!staticTimer) staticTimer = setInterval(drawNoise, 90);  }
+// v1.23: la estática ya NO sale en cada LOAD, solo cuando el teléfono
+// la pide (cambio de canal) con el mensaje {type:'static'}.
+// v1.23: la estática ya NO sale en cada LOAD, solo cuando e
   function hideStatic() {
     staticBox.style.display = 'none';
     if (staticTimer) { clearInterval(staticTimer); staticTimer = null; }
@@ -113,14 +115,13 @@
   var context = cast.framework.CastReceiverContext.getInstance();
   var playerManager = context.getPlayerManager();
 
-  // Cada LOAD trae customData {filter}: aplicar filtro y mostrar estática.
+  // Cada LOAD trae customData {filter}: aplicar filtro.
+  X
   playerManager.setMessageInterceptor(
     cast.framework.messages.MessageType.LOAD,
     function (loadRequest) {
       var cd = (loadRequest.media && loadRequest.media.customData) || {};
       setFilter(cd.filter | 0);
-      showStatic();
-      staticMinUntil = Date.now() + 450; // mínimo del efecto clásico
       return loadRequest;
     }
   );
